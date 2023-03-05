@@ -3,9 +3,12 @@ import java.lang.String.format
 import java.lang.String.join
 import java.net.*
 import java.util.*
+import java.util.regex.Pattern
 
 private var networkInterfaces = NetworkInterface.getNetworkInterfaces()
 private var mask = -1
+private var startAmount = 0
+private val pattern = Pattern.compile("\\s*([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})")
 
 @Throws(SocketException::class, UnknownHostException::class)
 fun main() {
@@ -21,7 +24,7 @@ fun main() {
 @Throws(UnknownHostException::class, SocketException::class)
 fun getPCInfo() {
     val localHost = InetAddress.getLocalHost()
-    val ni = NetworkInterface.getByInetAddress(localHost)
+    val ni = NetworkInterface.getByInetAddress(localHost) //find network interface
     val hardwareAddress = ni.hardwareAddress //mac
     val hexadecimal = arrayOfNulls<String>(hardwareAddress.size)
     if (hardwareAddress != null) {
@@ -101,20 +104,18 @@ private fun getIp(localHost: InetAddress): Int {
     return ip
 }
 
-@Throws(SocketException::class)
-private fun getMask(networkInterfaces: Enumeration<NetworkInterface>, oldValue: Int): Int {
-    val current = networkInterfaces.nextElement()
-    if (!current.isUp || current.isLoopback || current.isVirtual) {
-        return oldValue
-    }
-    val host = current.interfaceAddresses[0]
-    return host.networkPrefixLength.toInt()
-}
-
 private fun showMACAddresses(ip: Int) {
     val binaryMask: Int = createBinaryMask(mask)
     val address = ip and binaryMask
     val amount = binaryMask.inv() - 1
+    val part1 = binaryMask and 255
+    val part2 = binaryMask shr 8 and 255
+    val part3 = binaryMask shr 16 and 255
+    val part4 = binaryMask shr 24 and 255
+    if (part4 != 255) startAmount = part4 + 1
+    else if(part3 != 255) startAmount = part3 + 1
+    else if(part2 != 255) startAmount = part2 + 1
+    else startAmount = part1 + 1
     printConnections(address, amount)
 }
 
@@ -130,7 +131,7 @@ private fun createBinaryMask(mask: Int): Int {
 private fun printConnections(address: Int, amount: Int) {
     val timeout = 300
     println()
-    for (i in 1..amount) {
+    for (i in startAmount..amount) {
         val nodeAddress = (address + i).toLong()
         val anotherApi = createIP(nodeAddress)
         var inetAddress: InetAddress
@@ -138,10 +139,12 @@ private fun printConnections(address: Int, amount: Int) {
             inetAddress = InetAddress.getByName(anotherApi)
             try {
                 println("IP address: " + inetAddress.hostAddress)
-                val state = inetAddress.isReachable(timeout)
-                println("Is reachable: $state")
-                println(getARP(inetAddress.hostAddress))
-                Thread.sleep(100)
+                val mac =  getMacAddress(inetAddress.hostAddress)
+                if (mac!= null && mac!=""){
+                    println("Mac address: $mac")
+                    println("Manufacturer: " + lookupVendor(mac))
+                }
+                println()
             } catch (e: IOException) {
                 e.printStackTrace()
             }
@@ -161,9 +164,24 @@ private fun createIP(nodeAddress: Long): String {
 }
 
 @Throws(IOException::class)
+private fun getMacAddress(ip: String): String? {
+    val systemInput: String = getARP(ip)
+    var mac = ""
+    val matcher = pattern.matcher(systemInput)
+    if (matcher.find()) {
+        mac += matcher.group().replace("\\s".toRegex(), "")
+    } else {
+        println("No string found")
+    }
+    return mac
+}
+@Throws(IOException::class)
 private fun getARP(ip: String): String {
     val str = Scanner(Runtime.getRuntime().exec("arp -a $ip").inputStream).useDelimiter("\\A")
     return str.next()
 }
+
+fun lookupVendor(mac: String) = URL("http://api.macvendors.com/" + mac).readText()
+
 
 
